@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sleep and Resume"
+  short_description: "Wait in-session, then resume work"
+  default_prompt: "Use $sleep-and-resume to wait two hours, then check my running job once and continue."
