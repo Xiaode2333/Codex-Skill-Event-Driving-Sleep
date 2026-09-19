@@ -58,6 +58,27 @@ process read through its PTY session, so a timed wait is a timer process
 - Run concurrent producers, observers, or helpers as separate sessions so the
   waiter and the actor progress independently.
 
+### Keep long waits dormant
+
+When the orchestration runtime can keep an exec cell alive and later wait on
+that cell, keep bounded session reads inside one cell instead of returning to
+the model after every 300-second read:
+
+1. In one exec cell, loop empty reads on the same child-session id, using at
+   most the supported per-read ceiling. Accumulate output and stop only when
+   the child exits or the cell's own bounded deadline is reached.
+2. If the outer exec call yields a cell id while that loop is still running,
+   use one interruptible cell-level wait for the remaining wake horizon. This
+   preserves user steering while the model remains dormant between reads.
+3. Do not emit heartbeat notifications, repeated commentary, or unchanged
+   status messages during a healthy silent wait. Return control only for the
+   watcher's explicit event/timeout/fatal status, user interruption, or a real
+   runtime limit that requires continuation.
+
+If no steerable cell-level wait exists, fall back to resuming the same child
+session directly and keep any runtime-required idle updates minimal. Never
+replace a silent watcher with repeated scheduler or target polling.
+
 ## Detecting the watcher's outcome
 
 Have the watcher print one explicit status line at exit, for example
