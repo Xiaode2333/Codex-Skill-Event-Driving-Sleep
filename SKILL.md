@@ -10,6 +10,34 @@ an interval. Preserve the user's objective, keep-alive instruction, completion
 condition and wake target in existing task state for long or recurring waits.
 Perform any requested pre-check once and state the intended wake time.
 
+## Backend lifetime and computer-off use
+
+Determine where the agent runner, watcher and network connection live before
+claiming that work continues while the user's computer is off. Inspect process
+ancestry and session ownership without printing credentials or environment
+variables. A remote command host alone does not prove the agent runs remotely.
+
+- **Always-on remote host:** the agent itself must run on that host in a
+  persistent session or service. For a CLI inside `tmux`, confirm the agent is
+  a descendant of the tmux server and `destroy-unattached` is off. Losing the
+  local SSH client then leaves the runner and its wait alive; resuming the same
+  tmux session reconnects to the running agent. Network/authentication and the
+  remote host must remain available. `tmux` does not survive host reboot.
+- **Cloud task:** use the product's supported cloud task execution. Confirm
+  the required project tools, cluster access and credentials exist there;
+  moving the conversation alone does not transfer local access.
+- **Local runner:** sleeping or turning off its host suspends or stops work,
+  even when the watcher targets a remote cluster. Place the runner on an
+  always-on host or use supported cloud execution for computer-off operation.
+
+Keep the difference between client disconnection and runner termination
+explicit. Test a short wait and wake on the actual backend; report that evidence
+without claiming an unperformed power-off, restart or recovery test. A detached
+watcher, `nohup`, submitted Slurm job, or saved task note can preserve a process
+or evidence but does not independently wake a terminated agent. Preserve task
+state for manual resume after interruption; durable unattended restart requires
+a supported supervisor or scheduler that actually launches the agent.
+
 ## Event-driven waits
 
 For process-, log-, or condition-based waits, prefer one event watcher over a
@@ -38,9 +66,13 @@ task state and report that in-session waiting is technically unavailable.
 
 ## Concrete mechanics in Codex exec sessions
 
-These sessions have no `clock.sleep` tool. Waiting is a long-running child
-process read through its PTY session, so a timed wait is a timer process
-(`Start-Sleep`) that prints start and done lines and exits.
+Inspect the exposed tools rather than assuming every Codex backend has the
+same capabilities. If `clock.sleep` is available, use it for timed waits within
+the active runtime's limits. For an event watcher, or a timed fallback when no
+sleep tool exists, run a child process through `exec_command` and read the same
+session with `write_stdin`. Use the host's actual shell: Bash/POSIX `sleep` on
+Linux/macOS, or PowerShell `Start-Sleep` on Windows. Print explicit start and
+outcome lines. Use a PTY when cancellation needs Ctrl-C.
 
 - Start the wait with a command call that yields early and returns a session id
   while the work is still running. Its own yield caps at 30s, so a long wait
@@ -83,12 +115,15 @@ replace a silent watcher with repeated scheduler or target polling.
 
 Have the watcher print one explicit status line at exit, for example
 `status=EVENT|TIMEOUT|FATAL elapsed=...`, and judge the outcome by that line or
-by the child's `$LASTEXITCODE`.
+the captured child exit code (`$?` immediately after the child in Bash,
+`$LASTEXITCODE` in PowerShell). Propagate that code explicitly when wrapping it.
 
-Do not judge by the session-level exit code. A shell host reports 1 whenever its
-last command's `$?` was false, so a watcher that deliberately exits 3 on timeout
-or 4 on fatal output can still surface as session code 1. Measured case: the
-script's own `$LASTEXITCODE` was 3 while the session reported 1.
+Prefer the explicit outcome over a shell wrapper's session-level exit code.
+In PowerShell, a shell host can report 1 whenever its last command's `$?` was
+false, so a watcher that deliberately exits 3 on timeout or 4 on fatal output
+can still surface as session code 1. Measured case: the script's own
+`$LASTEXITCODE` was 3 while the session reported 1. This behavior is not a
+universal rule for Bash or every backend.
 
 Read the three outcomes differently:
 
@@ -110,6 +145,7 @@ ask for an artificial deadline or end merely because there is no useful work.
 Honor a supplied deadline or bounded monitoring horizon when one exists.
 
 Do not promise zero model turns when runtime limits force continuations. Do not
-claim waiting survives session closure, reload, disconnection or host
-termination. A durable scheduling request needs a supported scheduler and
-runner; a skill cannot independently reactivate a closed chat.
+claim waiting survives runner termination or host shutdown. Client
+disconnection can leave a verified remote persistent runner or supported cloud
+task active, as described above. A durable scheduling request needs a supported
+scheduler and runner; a skill cannot independently reactivate a closed chat.
