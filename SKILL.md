@@ -1,6 +1,6 @@
 ---
 name: sleep-and-resume
-description: Wait in a live session using event-driven blocking waits when available, with timed fallback, then check status or resume work. Use for session-bound waiting, not durable scheduling.
+description: Wait in a live Codex or Claude Code session using event-driven blocking waits when available, with timed fallback, then check status or resume work. Use for session-bound waiting, not durable scheduling.
 ---
 
 # Sleep and Resume
@@ -110,6 +110,39 @@ the model after every 300-second read:
 If no steerable cell-level wait exists, fall back to resuming the same child
 session directly and keep any runtime-required idle updates minimal. Never
 replace a silent watcher with repeated scheduler or target polling.
+
+## Concrete mechanics in Claude Code sessions
+
+Claude Code re-invokes the model when tracked background work finishes, so do
+not poll with foreground sleeps (they are blocked) or short wake loops.
+
+- Event watcher: start the watcher with `Bash` and `run_in_background: true`;
+  the model is woken when it exits. Alternatively use the `Monitor` tool with
+  an until-loop on the condition. Do not read its output file while it runs.
+- External state the harness cannot track (Slurm queue, remote job): run one
+  background watcher script that exits on the event or its own timeout, so its
+  exit is the wake signal.
+- Self-paced `/loop` mode: use `ScheduleWakeup` with a delay matched to how
+  fast the target changes; as the fallback heartbeat behind a watcher, use
+  1200s or more. Pass the same loop prompt back on each wake.
+- `CronCreate` recurs only while the session is alive; it is not durable.
+- Cancel a live background watcher with `TaskStop`.
+
+Measured (2026-10-14, Claude Code 2.1.300, MD_LAMMPS Slurm-hosted backend):
+
+- No model requests occur between ending the turn and the watcher's exit; each
+  wake costs one request that re-reads the cached context.
+- In `--input-format stream-json` mode, closing stdin (what the backend does
+  when the VS Code client disconnects with no turn pending) does not stop a
+  running background watcher. The CLI wakes on its exit, runs the follow-up
+  turn, may start the next watcher and wake again, and exits only once no
+  background task remains. Chained waits therefore continue with the client
+  gone. Always keep one background watcher running across a wait; a
+  `ScheduleWakeup`/`CronCreate`-only wait has nothing holding a detached
+  process open and is not verified.
+- Detached turns write output to the backend journal and the session
+  transcript; reopen the conversation in the extension to see it. The runner
+  stops with its Slurm allocation (check `squeue -o %L` for time left).
 
 ## Detecting the watcher's outcome
 
